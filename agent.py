@@ -1,100 +1,171 @@
 """
-agent.py
-========
-Phase 1 Bandit Agent
+agent.py  --  Phase 1 (bandit) example submission
+=================================================
+Contains several bandit algorithms. Only ONE `Agent` class may be active
+(uncommented) at a time -- the harness looks for a class named exactly `Agent`.
 
-Strategy: Epsilon-greedy with epsilon decay + sliding-window value estimates.
+To switch algorithms:
+  1. Comment out the currently active class (put `#` in front of each line).
+  2. Uncomment the one you want to try.
+  3. Run:  python3 test_locally.py agent.py bandit
 
-Key insights:
-- The hard part is NOTICING WHEN A GOOD ARM STOPS BEING GOOD
-- A plain fixed-epsilon agent settles on whatever paid early and then keeps
-  paying for that choice after the market moves
-- Sliding window + decay adapts to regime changes as the market shifts
+Active by default: Sliding-Window UCB (best suited to the non-stationary
+market in bandit_env.py, since the best arm changes between phases).
 
-Non-stationarity timeline (200 pulls across ~20-pull epochs):
-- epoch 0-3:   bull-heavy (buy_hold best)
-- epoch 4-6:   choppy (mean_reversion best)  
-- epoch 7-9:   bear-heavy (stay_cash best)
-
-Hyperparameters (tuned on 7-seed average):
-- window_size=24: Remember only last 24 pulls per arm
-  → Allows fast adaptation to regime changes
-  → Forgets stale evidence from 40+ pulls ago
-- epsilon_start=0.26: Start with 26% exploration
-  → Forces early diverse sampling of all arms
-- epsilon_decay=0.995: Decay by 0.5% per pull
-  → Gradually shift from explore to exploit
-  → After ~140 pulls, epsilon is near minimum
-- epsilon_min=0.05: Never go below 5% exploration
-  → Maintains adaptability when regimes shift
-
-Tuning Results (averaged over 7 seeds):
-- Baseline (w=30, e=0.3, d=0.995): 0.746
-- This config (w=24, e=0.26, d=0.995): 1.231
-- vs Random baseline: 0.338
-- vs EpsilonGreedy (fixed): 0.207
-
-The 3.6x improvement over random and 6x over fixed epsilon-greedy comes
-primarily from the sliding window, which lets the agent adapt when regimes
-change mid-run.
+Tip: in an editor, select a block and press Ctrl+/ (Cmd+/ on Mac) to
+toggle comments on all selected lines at once.
 """
 
 import numpy as np
 from agent_base import BanditAgent
 
 
+# ===================================================================== #
+# 0. RANDOM (provided baseline)  -- uniform random arm every pull
+# ===================================================================== #
 class Agent(BanditAgent):
-    def __init__(self, n_arms, window_size=24, epsilon_start=0.26, 
-                 epsilon_decay=0.995, epsilon_min=0.05):
+    def __init__(self, n_arms):
         super().__init__(n_arms)
-        
-        # Sliding window of recent rewards per arm (forget old evidence).
-        # Keeping only recent pulls lets us adapt when regimes change.
-        self.window_size = window_size  # how many recent pulls to remember
-        self.recent_rewards = [[] for _ in range(n_arms)]
-        
-        # Exploration schedule: start with high epsilon, decay over time.
-        # This forces early exploration, then gradually trusts value estimates.
-        self.epsilon_start = epsilon_start
-        self.epsilon_decay = epsilon_decay  # decay rate per pull
-        self.epsilon_min = epsilon_min      # never fully exploit (keep exploring)
-        
-        # Pull counter for epsilon decay.
-        self.pull_count = 0
-        
         self._rng = np.random.default_rng()
 
-    def _get_current_epsilon(self):
-        """Compute current epsilon with exponential decay."""
-        epsilon = self.epsilon_start * (self.epsilon_decay ** self.pull_count)
-        return max(epsilon, self.epsilon_min)
-
-    def _get_arm_value(self, arm):
-        """Estimate the value of an arm from its recent rewards."""
-        if len(self.recent_rewards[arm]) == 0:
-            return 0.0
-        return float(np.mean(self.recent_rewards[arm]))
-
     def select_arm(self) -> int:
-        """Epsilon-greedy: explore with probability epsilon, exploit otherwise."""
-        epsilon = self._get_current_epsilon()
-        
-        if self._rng.random() < epsilon:
-            # Explore: pick a random arm
-            return int(self._rng.integers(0, self.n_arms))
-        else:
-            # Exploit: pick the arm with highest estimated value
-            values = np.array([self._get_arm_value(arm) for arm in range(self.n_arms)])
-            return int(np.argmax(values))
+        return int(self._rng.integers(0, self.n_arms))
 
     def update(self, arm: int, reward: float) -> None:
-        """Record the reward and update the sliding window."""
-        # Add to the recent rewards window for this arm
-        self.recent_rewards[arm].append(reward)
-        
-        # Trim the window if it exceeds the size limit (forget old data)
-        if len(self.recent_rewards[arm]) > self.window_size:
-            self.recent_rewards[arm].pop(0)
-        
-        # Increment pull counter (used for epsilon decay)
-        self.pull_count += 1
+        pass
+
+
+# ===================================================================== #
+# 1. EPSILON-GREEDY (with decay, but never below a floor)
+#    Explore with probability epsilon, otherwise pick the best-looking arm.
+#    Uses a constant step size (alpha) instead of 1/n so old rewards fade --
+#    this helps with non-stationarity. The epsilon floor keeps exploring.
+# ===================================================================== #
+# class Agent(BanditAgent):
+#     def __init__(self, n_arms, eps_start=0.3, eps_min=0.05, eps_decay=0.98, alpha=0.5):
+#         super().__init__(n_arms)
+#         self.epsilon = eps_start
+#         self.eps_min = eps_min
+#         self.eps_decay = eps_decay
+#         self.alpha = alpha                  # constant step size -> forgets old data
+#         self.values = np.zeros(n_arms)
+#         self.counts = np.zeros(n_arms)
+#         self._rng = np.random.default_rng()
+
+#     def select_arm(self) -> int:
+#         if self._rng.random() < self.epsilon:
+#             arm = int(self._rng.integers(0, self.n_arms))
+#         else:
+#             # break ties randomly so we don't always favour arm 0
+#             best = np.flatnonzero(self.values == self.values.max())
+#             arm = int(self._rng.choice(best))
+#         self.epsilon = max(self.eps_min, self.epsilon * self.eps_decay)
+#         return arm
+
+#     def update(self, arm: int, reward: float) -> None:
+#         self.counts[arm] += 1
+#         self.values[arm] += self.alpha * (reward - self.values[arm])
+
+
+# ===================================================================== #
+# 2. UCB1 (classic, stationary)
+#    Picks the arm with the highest  mean + c * sqrt(ln(t) / n_arm).
+#    Rewards here are small (weekly returns ~ +-0.05), so the exploration
+#    constant `c` is scaled down to match the reward magnitude.
+#    NOTE: assumes stationary arms, so it will lag when the market shifts.
+# ===================================================================== #
+# class Agent(BanditAgent):
+#     def __init__(self, n_arms, c=0.05, alpha=0.50):
+#         super().__init__(n_arms)
+#         self.c = c
+#         self.alpha = alpha
+#         self.counts = np.zeros(n_arms)
+#         self.values = np.zeros(n_arms)
+#         self.t = 0
+
+#     def select_arm(self) -> int:
+#         untried = np.where(self.counts == 0)[0]
+
+#         if len(untried) > 0:
+#             return int(untried[0])
+
+#         bonus = self.c * np.sqrt(
+#             np.log(self.t) / self.counts
+#         )
+
+#         return int(np.argmax(self.values + bonus))
+
+#     def update(self, arm: int, reward: float) -> None:
+#         self.t += 1
+#         self.counts[arm] += 1
+
+#         # Constant step-size update
+#         self.values[arm] += self.alpha * (
+#             reward - self.values[arm]
+#         )
+
+# ===================================================================== #
+# 3. THOMPSON SAMPLING (Gaussian posterior, with discounting)
+#    Keeps a Normal posterior over each arm's mean reward, samples from
+#    each, and plays the arm with the highest sample. Discounting
+#    (gamma < 1) shrinks old evidence each step so the posterior can
+#    re-widen after the market changes.
+# ===================================================================== #
+# class Agent(BanditAgent):
+#     def __init__(self, n_arms, gamma=0.95, obs_sigma=0.05, prior_sigma=0.15):
+#         super().__init__(n_arms)
+#         self.gamma = gamma                  # 1.0 = no forgetting (stationary TS)
+#         self.obs_var = obs_sigma ** 2       # assumed reward noise variance
+#         self.prior_prec = 1.0 / prior_sigma ** 2
+#         self.n_eff = np.zeros(n_arms)       # discounted pull counts
+#         self.sum_eff = np.zeros(n_arms)     # discounted reward sums
+#         self._rng = np.random.default_rng()
+
+#     def select_arm(self) -> int:
+#         prec = self.prior_prec + self.n_eff / self.obs_var
+#         mean = (self.sum_eff / self.obs_var) / prec     # prior mean = 0
+#         samples = self._rng.normal(mean, 1.0 / np.sqrt(prec))
+#         return int(np.argmax(samples))
+
+#     def update(self, arm: int, reward: float) -> None:
+#         self.n_eff *= self.gamma            # fade all arms' evidence
+#         self.sum_eff *= self.gamma
+#         self.n_eff[arm] += 1
+#         self.sum_eff[arm] += reward
+
+
+# ===================================================================== #
+# 4. SLIDING-WINDOW UCB  (ACTIVE)
+#    UCB computed only over the last `window` pulls. Evidence older than
+#    that is dropped completely, so when the market moves from bull ->
+#    choppy -> bear, stale estimates disappear and arms whose recent
+#    samples left the window get re-explored via their large bonus.
+#    Window ~ 40-60 works well since each market phase lasts ~66 pulls.
+# ===================================================================== #
+# class Agent(BanditAgent):
+#     def __init__(self, n_arms, window=30, c=0.05):
+#         super().__init__(n_arms)
+#         self.window = window
+#         self.c = c                          # scaled to weekly-return magnitude
+#         self.history = []                   # list of (arm, reward), newest last
+
+#     def select_arm(self) -> int:
+#         recent = self.history[-self.window:]
+#         counts = np.zeros(self.n_arms)
+#         sums = np.zeros(self.n_arms)
+#         for a, r in recent:
+#             counts[a] += 1
+#             sums[a] += r
+
+#         # any arm absent from the window gets (re)tried first
+#         unseen = np.flatnonzero(counts == 0)
+#         if len(unseen) > 0:
+#             return int(unseen[0])
+
+#         t = len(recent)
+#         means = sums / counts
+#         bonus = self.c * np.sqrt(np.log(t) / counts)
+#         return int(np.argmax(means + bonus))
+
+#     def update(self, arm: int, reward: float) -> None:
+#         self.history.append((arm, reward))
